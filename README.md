@@ -28,3 +28,24 @@ The following assumes the use of `node@>=10`.
 ## Run Tests
 
 `yarn test`
+
+## Add To Your Site
+
+To include a QuickSwap iframe within your site just add an iframe element within your website code and link to the QuickSwap frontent.
+
+Linking to a MATIC <-> QUICK swap page would look something like this. To link to a token of your choice replace the address after “outputCurrency” with the token address of the token you want to link to.
+
+`<iframe
+  src="https://quickswap.exchange/#/swap?outputCurrency=0x831753dd7087cac61ab5644b308642cc1c33dc13"
+  height="660px"
+  width="100%"
+  style="
+    border: 0;
+    margin: 0 auto;
+    display: block;
+    border-radius: 10px;
+    max-width: 600px;
+    min-width: 300px;
+  "
+  id="myId"
+/>`
