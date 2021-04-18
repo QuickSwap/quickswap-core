@@ -480,8 +480,6 @@ interface IStakingRewards {
 
     function earned(address account) external view returns (uint256);
 
-    function getRewardForDuration() external view returns (uint256);
-
     function totalSupply() external view returns (uint256);
 
     function balanceOf(address account) external view returns (uint256);
@@ -500,7 +498,7 @@ interface IStakingRewards {
 contract RewardsDistributionRecipient {
     address public rewardsDistribution;
 
-    function notifyRewardAmount(uint256 reward) external;
+    function notifyRewardAmount(uint256 reward, uint256 duration) external;
 
     modifier onlyRewardsDistribution() {
         require(msg.sender == rewardsDistribution, "Caller is not RewardsDistribution contract");
@@ -518,7 +516,6 @@ contract StakingRewards is IStakingRewards, RewardsDistributionRecipient, Reentr
     IERC20 public stakingToken;
     uint256 public periodFinish = 0;
     uint256 public rewardRate = 0;
-    uint256 public rewardsDuration;
     uint256 public lastUpdateTime;
     uint256 public rewardPerTokenStored;
 
@@ -533,13 +530,11 @@ contract StakingRewards is IStakingRewards, RewardsDistributionRecipient, Reentr
     constructor(
         address _rewardsDistribution,
         address _rewardsToken,
-        address _stakingToken,
-        uint256 _rewardsDuration
+        address _stakingToken
     ) public {
         rewardsToken = IERC20(_rewardsToken);
         stakingToken = IERC20(_stakingToken);
         rewardsDistribution = _rewardsDistribution;
-        rewardsDuration = _rewardsDuration;
     }
 
     /* ========== VIEWS ========== */
@@ -568,10 +563,6 @@ contract StakingRewards is IStakingRewards, RewardsDistributionRecipient, Reentr
 
     function earned(address account) public view returns (uint256) {
         return _balances[account].mul(rewardPerToken().sub(userRewardPerTokenPaid[account])).div(1e18).add(rewards[account]);
-    }
-
-    function getRewardForDuration() external view returns (uint256) {
-        return rewardRate.mul(rewardsDuration);
     }
 
     /* ========== MUTATIVE FUNCTIONS ========== */
@@ -620,7 +611,9 @@ contract StakingRewards is IStakingRewards, RewardsDistributionRecipient, Reentr
 
     /* ========== RESTRICTED FUNCTIONS ========== */
 
-    function notifyRewardAmount(uint256 reward) external onlyRewardsDistribution updateReward(address(0)) {
+    function notifyRewardAmount(uint256 reward, uint256 rewardsDuration) external onlyRewardsDistribution updateReward(address(0)) {
+        require(block.timestamp.add(rewardsDuration) >= periodFinish, "Cannot reduce existing period");
+        
         if (block.timestamp >= periodFinish) {
             rewardRate = reward.div(rewardsDuration);
         } else {
@@ -638,7 +631,7 @@ contract StakingRewards is IStakingRewards, RewardsDistributionRecipient, Reentr
 
         lastUpdateTime = block.timestamp;
         periodFinish = block.timestamp.add(rewardsDuration);
-        emit RewardAdded(reward);
+        emit RewardAdded(reward, periodFinish);
     }
 
     /* ========== MODIFIERS ========== */
@@ -655,12 +648,11 @@ contract StakingRewards is IStakingRewards, RewardsDistributionRecipient, Reentr
 
     /* ========== EVENTS ========== */
 
-    event RewardAdded(uint256 reward);
+    event RewardAdded(uint256 reward, uint256 periodFinish);
     event Staked(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, uint256 reward);
 }
-
 interface IUniswapV2ERC20 {
     function permit(address owner, address spender, uint value, uint deadline, uint8 v, bytes32 r, bytes32 s) external;
 }
@@ -677,6 +669,7 @@ contract StakingRewardsFactory is Ownable {
     struct StakingRewardsInfo {
         address stakingRewards;
         uint rewardAmount;
+        uint duration;
     }
 
     // rewards info by staking token
@@ -700,10 +693,21 @@ contract StakingRewardsFactory is Ownable {
         StakingRewardsInfo storage info = stakingRewardsInfoByStakingToken[stakingToken];
         require(info.stakingRewards == address(0), 'StakingRewardsFactory::deploy: already deployed');
 
-        info.stakingRewards = address(new StakingRewards(/*_rewardsDistribution=*/ address(this), rewardsToken, stakingToken, rewardsDuration));
+        info.stakingRewards = address(new StakingRewards(/*_rewardsDistribution=*/ address(this), rewardsToken, stakingToken));
         info.rewardAmount = rewardAmount;
+        info.duration = rewardsDuration;
         stakingTokens.push(stakingToken);
     }
+
+    function update(address stakingToken, uint rewardAmount, uint256 rewardsDuration) public onlyOwner {
+        StakingRewardsInfo storage info = stakingRewardsInfoByStakingToken[stakingToken];
+        require(info.stakingRewards != address(0), 'StakingRewardsFactory::update: not deployed');
+
+        info.rewardAmount = rewardAmount;
+        info.duration = rewardsDuration;
+    }
+
+
 
     ///// permissionless functions
 
@@ -723,18 +727,20 @@ contract StakingRewardsFactory is Ownable {
         StakingRewardsInfo storage info = stakingRewardsInfoByStakingToken[stakingToken];
         require(info.stakingRewards != address(0), 'StakingRewardsFactory::notifyRewardAmount: not deployed');
 
-        if (info.rewardAmount > 0) {
+        if (info.rewardAmount > 0 && info.duration > 0) {
             uint rewardAmount = info.rewardAmount;
+            uint256 duration = info.duration;
             info.rewardAmount = 0;
+            info.duration = 0;
 
             require(
                 IERC20(rewardsToken).transfer(info.stakingRewards, rewardAmount),
                 'StakingRewardsFactory::notifyRewardAmount: transfer failed'
             );
-            StakingRewards(info.stakingRewards).notifyRewardAmount(rewardAmount);
+            StakingRewards(info.stakingRewards).notifyRewardAmount(rewardAmount, duration);
         }
     }
-    
+
     function pullExtraTokens(address token, uint256 amount) external onlyOwner {
         IERC20(token).transfer(msg.sender, amount);
     }
